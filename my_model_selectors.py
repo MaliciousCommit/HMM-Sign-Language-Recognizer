@@ -66,7 +66,13 @@ class SelectorBIC(ModelSelector):
 
     http://www2.imm.dtu.dk/courses/02433/doc/ch6_slides.pdf
     Bayesian information criteria: BIC = -2 * logL + p * logN
+    where,
+        logL => model score
+        p => number of parameters
+        N => number of data points
     """
+    def num_of_params(self, state_num, data):
+        return state_num * state_num + 2 * state_num * len(data[0]) - 1
 
     def select(self):
         """ select the best model for self.this_word based on
@@ -76,8 +82,28 @@ class SelectorBIC(ModelSelector):
         """
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+        best_model = None
+        best_BIC = float("inf")
+
+        for n_components in range(self.min_n_components, self.max_n_components+1):
+            try:
+                model = self.base_model(n_components)
+                logL = model.score(self.X, self.lengths)
+                param = self.num_of_params(n_components, self.X)
+                BIC = (-2) * logL + param * math.log(len(self.X))
+
+                if best_model is None:
+                    best_model = model
+                    best_BIC = BIC
+
+                if BIC < best_BIC:
+                    best_model = model
+                    best_BIC = BIC
+
+            except:
+                pass
+
+        return best_model
 
 
 class SelectorDIC(ModelSelector):
@@ -93,8 +119,37 @@ class SelectorDIC(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        rest_words = list(self.words.keys())
+        rest_words.remove(self.this_word)
+
+        best_model = None
+        best_DIC = float("-inf")
+        M = len(self.words.keys())
+
+        for n_components in range(self.min_n_components, self.max_n_components+1):
+            try:
+                model = self.base_model(n_components)
+                logL = model.score(self.X, self.lengths)
+
+                rest_logLs = []
+                for word in rest_words:
+                    Y, Ylengths = self.hwords[word]
+                    rest_logLs.append(model.score(Y, Ylengths))
+
+                DIC = logL - (1/(M-1) * np.sum(rest_logLs))
+
+                if best_model is None:
+                    best_model = model
+                    best_DIC = DIC
+
+                if DIC > best_DIC:
+                    best_model = model
+                    best_DIC = DIC
+
+            except:
+                pass
+
+        return best_model
 
 
 class SelectorCV(ModelSelector):
@@ -104,6 +159,30 @@ class SelectorCV(ModelSelector):
 
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+        split_method = KFold()
 
-        # TODO implement model selection using CV
-        raise NotImplementedError
+        best_score = float("-inf")
+        best_model = None
+
+        for n_components in range(self.min_n_components, self.max_n_components+1):
+            scores = []
+            hmm_model = None
+
+            try:
+                for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
+                    X, lengths = combine_sequences(cv_train_idx, self.sequences)
+                    test_X, test_lengths = combine_sequences(cv_test_idx, self.sequences)
+
+                    hmm_model = GaussianHMM(n_components=n_components, covariance_type="diag", n_iter=1000,
+                                            random_state=self.random_state, verbose=False).fit(X, lengths)
+                    scores.append(hmm_model.score(test_X, test_lengths))
+
+                avg_score = np.mean(scores)
+
+                if (avg_score > best_score):
+                    best_score = avg_score
+                    best_model = hmm_model
+            except:
+                pass
+
+        return best_model if best_model is not None else self.base_model(self.n_constant)
